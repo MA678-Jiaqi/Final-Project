@@ -1,0 +1,458 @@
+---
+title: "MA678_Midterm_Jiaqi"
+author: "Jiaqi Sun"
+date: "2022-11-24"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+library(readr)
+library(tidyverse)
+library(stringr)
+library(rstanarm)
+library(knitr)
+library(magrittr)
+library(kableExtra)
+library(gridExtra)
+library(lubridate)
+library(car) 
+library(lme4)
+library(arm)
+library(lmerTest)
+library(lattice)
+require(gridExtra)
+library(ggplot2)
+library(PerformanceAnalytics)
+library(rstanarm)
+library(merTools)
+```
+
+
+## Abstract
+
+The Premier League is the highest level of the men's English football league system. Contested by 20 clubs, it operates on a system of promotion and relegation with the English Football League. Seasons typically run from August to May with each team playing 38 matches. As 3 point for a win, 1 point for a draw and 0 point for a lose, the team with the highest points in the end of the season is the champion. For the past 20 seasons, six clubs have won the Premier League title: Manchester United, Chelsea, Manchester City, Arsenal, Leicester City and Liverpool. Thus, here comes the problem: with all kinds of match statistics being collected and analyzed, what factor determines whether a match win or lose?
+
+To figure out this problem, I built a multilevel model with group level `Team` and `Referee`. The result indicates that different teams are influenced by different match statistics.
+
+This report can be divided into 4 main parts: Introduction, Method, Result, and Discussion. 
+
+## Introduction
+
+Usually, there are several Essential Premier League Stats including Number of Cards (yellow/red) Per Game,Goals Per Game, Shots on Target, Fouls Committed. These are important description of performance of the match and whether the home team can win the match is greatly decided by it. 
+
+Nevertheless, central to all of this are the referees, the individuals who uphold the laws of the game, who maintain authenticity and who make the decisions, which can be the difference between winning and losing.  Despite their importance, referees are an often overlooked part of professional football. Referees are an integral part of the global game and are required for fixtures to take place and competitions to occur. Despite the help of VAR, referees continue to make errors on a weekly basis. Fans have also given humorous nicknames to Premier League referees over the years: "Fantastic Four Blind" -- Refers to the four referees who enforce the Premier League, namely "Great Hunter" Clattenburg, "The Scourge" Atkinson, "Blind Man" Oliver and "North London Sniper" McDean, these four people often appear on the field Misjudgments and misjudgments, and turning a blind eye to many foul actions, are called the "Fantastic Four Blind" by fans. All these four "blind" have enforced countless matches compared to other referees so definitely, referees should be considered when we talked about the match result.
+
+On the other hand, Unlike some of its counterparts across Europe, where one or two clubs are dominant, the Premier League features what has become popularly known as 'The Big Six', which are composed by Manchester United, Liverpool, Arsenal, Chelsea, Manchester City and Tottenham. They are the most consistently successful teams in the division. Not only that, but they boast the biggest stadiums, broadest fanbases and, as a result, the healthiest bank accounts. Meanwhile, "The Big Six" teams are willing to spend a lot on buying top players and hire dominant coached all over the world to form a better lineup and chase championship while some teams not. It's natural to come to the conclusion that teams in 'The Big Six' teams are more likely to win the matches. That to say, team is another factor we should take into account. 
+
+Therefore, I decide to introduce multilevel models to find out the influences of fixed effects (e.g. corners, goals, cards, shots and so on) and random effects (teams, Referees). 
+
+
+## Methods
+
+### Data Preprocessing
+
+I found the data set from Kaggle (https://www.kaggle.com/datasets/irkaal/english-premier-league-results/code?select=results.csv). 
+
+Firstly, I download 2000-2022 match results. The match statistics can be divided into Home Team statistics and away team statistics. For now, we are only focusing on both the Home Team statistics and the Away Team statistics.  
+
+Additionally, as the match statistics is by individual games, I calculate average game statistics for each team and transform `FTR` and `HTR` information to binary factor (0 or 1). I also need to filter out the referees that participated in over 50 matches so that they are really making an impact. I then combined the data to get the final data frame.
+
+ Here is the glossary of terms: 
+
+| column names      | explanation                                     |
+| :--:              | :-----                                          |
+| Season            |	Match Season                                    |
+| DateTime          |	Match Date and Time (yyyy-mm-dd hh:mm:ss)       |
+| HomeTeam          |	Home Team                                       |
+| AwayTeam          |	Away Team                                       |
+| FTHG              |	Full Time Home Team Goals                       |
+| FTAG              |	Full Time Away Team Goals                       |
+| FTR               |	Full Time Result(H=Home Win, D=Draw, A=Away Win)|
+| HTHG              |	Half Time Home Team Goals                       |
+| HTAG              |	Half Time Away Team Goals                       |
+| HTR               |	Half Time Result(H=Home Win, D=Draw, A=Away Win)|
+| Referee           |	Match Referee                                   |
+| HS                |	Home Team Shots                                 |
+| AS                |	Away Team Shots                                 |
+| HST               |	Home Team Shots on Target                       |
+| AST               |	Away Team Shots on Target                       |
+| HC                |	Home Team Corners                               |
+| AC                |	Away Team Corners                               |
+| HF                |	Home Team Fouls Committed                       |
+| AF                |	Away Team Fouls Committed                       |
+| HY                |	Home Team Yellow Cards                          |
+| AY                |	Away Team Yellow Cards                          |
+| HR                |	Home Team Red Cards                             |
+| AR                |	Away Team Red Cards                             |
+
+\newpage
+
+### Exploratory Data Analysis
+
+```{r echo = FALSE}
+#read data
+results <- read.csv("results.csv", header = TRUE)
+
+#convert FTR and HTR to binary factors 0 and 1
+results$FTR <- ifelse(results$FTR == "H", 1, 0)
+#results$HTR <- ifelse(results$HTR == "H", 1, 0)
+
+# filter out the referees took charge of over 100 matches that we considered as important referees, out of 8289 matches and 157 referees during 20 seasons, there are 6337 matches and 23 referees left
+ref <- results %>% 
+  group_by(Referee) %>% 
+  summarise(ref_num = n()) %>% 
+  filter(ref_num >= 100) %>% 
+  dplyr::select(Referee)
+
+ref <- as.list(deframe(ref))
+
+EPL_stats <- results[results$Referee %in% ref, ]
+
+```
+
+
+By aforementioned part, I've got a `EPL_stats` with 7041 observations and 23 variables, among which there is 1 output `FTR` and 20 predictors. However, whether or not to use all of these 22 predictors is depended on following analysis.
+
+~\\
+
+
+```{r echo=FALSE, fig.height=3.6, fig.width=10, fig.cap="relationship between Full Time Result and Full Time Home Team Goals"}
+set.seed(1)
+team_sample <- sample(unique(EPL_stats$HomeTeam), 10, replace = FALSE) # random sample 10 from 30 
+# Full Time Home Goal
+FTHG_by_teams <- ggplot(data = subset(EPL_stats, HomeTeam %in% team_sample)) + 
+  aes(x = FTHG, y = FTR) + 
+  geom_point(aes(color = factor(HomeTeam)), size = .6) + 
+  geom_smooth(aes(color = factor(HomeTeam)), method = "glm", se = FALSE, method.args = list(family=binomial)) + 
+  labs(title = "(a) Full Time Result vs Full Time Home Goals", x = "Full Time Home Goal", y = "Full Time Result")
+
+ref_sample <- sample(unique(EPL_stats$Referee), 10, replace = FALSE) 
+FTHG_by_REF <- ggplot(data = subset(EPL_stats, Referee %in% ref_sample)) + 
+  aes(x = FTHG, y = FTR) + 
+  geom_point(aes(color = Referee), size = .6) + 
+  geom_smooth(aes(color = Referee), method = "glm", se = FALSE, method.args = list(family=binomial)) + 
+  labs(title = "(b) Full Time Result vs Full Time Home Goals", x = "Full Time Home Goal", y = "Full Time Result") + ylim(0,1) 
+grid.arrange(FTHG_by_teams, FTHG_by_REF, ncol = 2)
+```
+~\\
+
+Figure 1 illustrates the relationship between FTR and Full Time Home Goals, while fig(a) is in team level and fig(b) is in Half Time Result level. However, whatever the level, Full Time Result show the winning trend as Full time Home Goals going up. And in different teams and Half Time Results, the intercepts and slopes show slights differences. After I draw the graph of Full Time Result versus appearance, rebounds, assists, steals and blocks, the figures are quite similar. Thus I put them in the appendix. 
+
+~\\
+
+
+```{r echo=FALSE, fig.height=3.6, fig.width=10, fig.cap="relationship between Full Time Result and Home Team Red Cards"}
+set.seed(1)
+team_sample <- sample(unique(EPL_stats$HomeTeam), 10, replace = FALSE) # random sample 10 from 30 
+# Home Team Fouls Committed
+HR_by_teams <- ggplot(data = subset(EPL_stats, HomeTeam %in% team_sample)) + 
+  aes(x = HR, y = FTR) + 
+  geom_point(aes(color = factor(HomeTeam)), size = .6) + 
+  geom_smooth(aes(color = factor(HomeTeam)), method = "glm", se = FALSE, method.args = list(family=binomial)) + 
+  labs(title = "(a) FTR vs Home Team Red Cards", x = "Home Team Red Cards", y = "Full Time Result")
+
+ref_sample <- sample(unique(EPL_stats$Referee), 10, replace = FALSE) 
+HR_by_REF <- ggplot(data = subset(EPL_stats, Referee %in% ref_sample)) + 
+  aes(x = HR, y = FTR) + 
+  geom_point(aes(color = Referee), size = .6) + 
+  geom_smooth(aes(color = Referee), method = "glm", se = FALSE, method.args = list(family=binomial)) + 
+  labs(title = "(b) FTR vs Home Team Red cards", x = "Home Team Red Cards", y = "Full Time Result") + ylim(0,1) 
+grid.arrange(HR_by_teams, HR_by_REF, ncol = 2)
+```
+~\\
+
+Figure above shows that whether from team or referee level, high Home Red Cards are bad and usually lead to worse match result. A red card means instant dismissal. In addition to having to fight with ten people, being fined and suspended, and sometimes suffering penalty kicks, this will break the balance of the field. Yet, the slopes and intercepts vary from team to team and that indicate random effects really matter in this case.
+
+~\\
+
+```{r echo=FALSE, fig.height=3.6, fig.width=10, fig.cap="relationship between Full Time Result and Home Team Shots on Target"}
+set.seed(1)
+team_sample <- sample(unique(EPL_stats$HomeTeam), 10, replace = FALSE) # random sample 10 from 30 
+# Home Team Fouls Committed
+HF_by_teams <- ggplot(data = subset(EPL_stats, HomeTeam %in% team_sample)) + 
+  aes(x = HST, y = FTR) + 
+  geom_point(aes(color = factor(HomeTeam)), size = .6) + 
+  geom_smooth(aes(color = factor(HomeTeam)), method = "glm", se = FALSE, method.args = list(family=binomial)) + 
+  labs(title = "(a) FTR vs Home Team Shots on Target", x = "Home Team Shots on Target", y = "Full Time Result")
+
+ref_sample <- sample(unique(EPL_stats$Referee), 10, replace = FALSE) 
+HF_by_REF <- ggplot(data = subset(EPL_stats, Referee %in% ref_sample)) + 
+  aes(x = HST, y = FTR) + 
+  geom_point(aes(color = Referee), size = .6) + 
+  geom_smooth(aes(color = Referee), method = "glm", se = FALSE, method.args = list(family=binomial)) + 
+  labs(title = "(b) FTR vs Home Team Shots on Target", x = "Home Team Shots on Target", y = "Full Time Result") + ylim(0,1) 
+grid.arrange(HF_by_teams, HF_by_REF, ncol = 2)
+```
+~\\
+
+Figure above shows the correlation between the match's Full Time Result and Home Team Shots on Target. Similarly, figure(a) is in team level while figure(b) is in referee level. The results is very like the one shows the correlation between the match's Full Time Result and Home Team Shots. Because Home Team shots on Target is absolutely come from Home Team Shots. Thus, I decided to look into relationship between HST and HS.
+
+~\\
+
+```{r echo=FALSE, fig.height=4, fig.width=10, fig.cap="relationship between Home Team Shots on Target and Home Team Shots"}
+ggplot(data = EPL_stats) + 
+  aes(x = HS, y = HST) + 
+  geom_point() + 
+  geom_smooth(formula = 'y ~ x', method = "lm") + 
+  labs(titile = "Home Team Shots on Target vs Home Team Shots", x = "Home Team Shots", y = "Home Team Shots on Target")
+#cor(EPL_stats$HS, EPL_stats$HST, method = "pearson")
+```
+
+~\\
+
+Figure 3 verifies that home team players' shots on target are closely related with their shots with no surprise. Thus, I decide to exclude variable `Home Team shots`. 
+
+
+
+```{r echo=FALSE, fig.height=3.6, fig.width=10, fig.cap="relationship between Full Time Result and Away Team Corners"}
+set.seed(123)
+EPL_stats %>% subset(HomeTeam %in% sample(unique(EPL_stats$HomeTeam),12)) %>% ggplot() + aes(x=AC,y=FTR, color = HomeTeam) + geom_point(size = .6) + facet_wrap(vars(HomeTeam)) + geom_smooth(aes(color = HomeTeam), method = "glm", se = FALSE, method.args = list(family=binomial)) + 
+labs(title = "(a) FTR vs Away Team Corners", x = "Away Team Corners", y = "Full Time Result")
+```
+~\\
+
+Figure above shows that whatever from team or referee level, high away team Corners are good and usually lead to better match result. Yet, the slopes and intercepts vary from team to team and that indicate random effects really matter in this case.
+
+~\\
+
+```{r echo=FALSE, fig.height=3.6, fig.width=10, fig.cap="relationship between Full Time Result and Home team Yellow cards"}
+set.seed(12345)
+EPL_stats %>% subset(HomeTeam %in% sample(unique(EPL_stats$HomeTeam),12)) %>% ggplot() + aes(x=HY,y=FTR, color = HomeTeam) + geom_point(size = .6) + facet_wrap(vars(HomeTeam)) + geom_smooth(aes(color = HomeTeam), method = "glm", se = FALSE, method.args = list(family=binomial)) +
+  labs(title = "(a) FTR vs Home Team Yellow Cards", x = "Home Team Yellow Cards", y = "Full Time Result")
+  
+```
+~\\
+
+Figure above shows that whatever from team or referee level, high home team yellow cards are bad and usually lead to worse match result. Yet, the slopes and intercepts vary from team to team and that indicate random effects really matter in this case.
+
+
+\newpage
+
+### Model fitting
+
+Since different teams and positions have quite large impacts on the model, I decide to use multilevel model to fit `NBA_data`. As to selection of variables, I also include `three made per game` because under the crazy trendency of small ball, the ability to shoot 3-points is really important. Meanwhile, since all variables are more or less skewed and have heavy tails, I took `log(variable + 1)` to create new ones. All original distribution plots of variables can be found in Appendix of this report. For the next step, I draw the Pearson correlation matrix to do the predictor selection.
+
+```{r include=FALSE}
+log_EPL_stats <- EPL_stats %>% dplyr::select(Season, DateTime, HomeTeam, AwayTeam, Referee, FTR,
+                                          FTHG, FTAG, HST, AST,
+                                          HC, AC, HF, AF, HY, AY, HR, AR) %>% data.frame()
+
+log_EPL_stats$HomeTeam      <- factor(EPL_stats$HomeTeam)
+log_EPL_stats$AwayTeam      <- factor(EPL_stats$AwayTeam)
+log_EPL_stats$Referee       <- factor(EPL_stats$Referee)
+
+log_EPL_stats$FTHG       <- log(log_EPL_stats$FTHG       + 1)
+log_EPL_stats$FTAG       <- log(log_EPL_stats$FTAG       + 1)
+log_EPL_stats$HST        <- log(log_EPL_stats$HST        + 1)
+log_EPL_stats$AST        <- log(log_EPL_stats$AST        + 1)
+log_EPL_stats$HC         <- log(log_EPL_stats$HC         + 1)
+log_EPL_stats$AC         <- log(log_EPL_stats$AC         + 1)
+log_EPL_stats$HF         <- log(log_EPL_stats$HF         + 1)
+log_EPL_stats$AF         <- log(log_EPL_stats$AF         + 1)
+```
+
+~\\
+
+Additionally, as different teams have quite different on-court strategies and seasonal goals, random effect of teams is quite important for variables: `FTHG, HST and HC`. On the other hand, A foul is an unfair act by a player, deemed by the referee to contravene the game's laws, that interferes with the active play of the game. Fouls could be pretty bias as each referee has his own standard. For example: Mike Dean is officially the strictest referee in the Premier League, according to results of a new study, `HF` per game: 10.80. `HY` per game: 1.93. Overall `HF` per booking: 5.59. Fewest `HF` per game: Burnley (9.06). Thus, I prefer changing slopes and intercepts of `referee`` for different ones. Here is the function I built: 
+
+```{r eval=FALSE}
+model <- glmer(formula = FTR ~ FTHG + HST + AC + HY + HR
+              + (1 + FTHG + HST + HC| HomeTeam) 
+              + (1 + HF + HY| Referee),
+              data = log_EPL_stats,
+              family = binomial(link = "logit"))
+
+summary(model)
+```
+
+~\\
+
+Here is the summary of model(fixed effect) and all variables here are considered as statistically significant at $\alpha$ = 0.5 level. To be more clear, a fixed effect parameters are also include in figure 6
+
+|                |Estimate   |Std. Error  |z value |Pr(>&#124;z&#124;) |
+|:---:           |:---:      |:---:       |:---:   |:---:              |
+|(Intercept)     |-4.21      |0.23        |-18.3   |0.00 ***           |
+|log_FTHG        |4.43       |0.13        |33.4    |0.00 ***           |
+|log_HST         |0.11       |0.09        |1.16    |0.25 *             |
+|log_AC          |0.16       |0.07        |2.23    |0.03 *             |
+|log_HY          |-0.17      |0.03        |-5.67   |0.00 ***           |
+|log_HR          |-0.99      |0.16        |-6.21   |0.00 **            |
+
+
+```{r echo=FALSE,  out.width = '100%'}
+library(sjPlot)
+library(sjlabelled)
+library(sjmisc)
+library(ggplot2)
+
+theme_set(theme_sjplot())
+plot_model(model, vline.color = "red")
+
+plotFEsim(FEsim(model, n.sims = 100), level = 0.9, stat = 'median', intercept = FALSE)
+
+#knitr::include_graphics("000026.png")
+```
+
+```{r echo = FALSE}
+fixef(model)
+```
+
+|(Intercept)     |FTHG       |HST         |AC         |HY         |HR         |
+|:---:           |:---:      |:---:       |:---:      |:---:      |:---:      |
+|-4.2114098      |4.4340482  |0.1127628   |0.1574599  |-0.1794364 |-0.9994892 |
+
+
+And the following tables are the summary of random effects. The first one is random effect of Team (only display first ten teams alphabetically) and the second one is Positions.
+
+```{r include=TRUE, echo=FALSE}
+round(ranef(model)$HomeTeam, digits = 2)[21:24, ]
+```
+
+|                |(intercept)  |FTHG        |HST        |HC         |
+|:---:           |:---:        |:---:       |:---:      |:---:      |
+|Leicester       |-0.10        |-0.04       |-0.05      |0.06       |
+|liverpool       |0.28         |0.11        |0.15       |-0.17      |
+|Man City        |0.55         |0.21        |0.29       |-0.34      |
+|Man United      |0.62         |0.24        |0.33       |-0.38      |
+
+```{r include=TRUE, echo=FALSE}
+round(ranef(model)$Referee, digits = 2)[13:18, ]
+```
+|                |(intercept)  |HF          |HY         |
+|:---:           |:---:        |:---:       |:---:      |
+|M Atkinson      |0.54         |-0.19       |-0.03      |
+|M Clattenburg   |-1.04        |0.36        |0.07       |
+|M Dean          |0.08         |-0.03       |-0.01      |
+|M Halsey        |0.01         |0.00        |0.00       |
+|M Jones         |-0.50        |0.17        |0.03       |
+|M Oliver        |-0.54        |0.19        |0.03       |
+
+
+Additionally, a random effect plot for `Team` level are included. From upper left plot of Picture 7, we can come to the conclusion that baseline of salary for each team are quite different. This exactly verify that championship team are willing to pay more money even over the luxury cap. Another parameter that differs most is `Points`, which means scorers suits tastes of some team while not for others. 
+
+```{r echo=FALSE, out.width = '100%', fig.cap="Random Effect of EPL Model"}
+Team_level <- REsim(model, n.sims = 1000) %>% filter(groupFctr == "HomeTeam")
+
+Team_level$term <- factor(Team_level$term); Team_level$groupID <- factor(Team_level$groupID)
+ggplot(Team_level) +
+  geom_pointrange(aes(x = groupID, y = mean, ymax = mean+2*sd, ymin = mean-2*sd, group = term, color = term)) +
+  facet_wrap(~term, ncol = 2) + ylab("Random Effect") + xlab("Team") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 7)) + theme(legend.position = "none")
+#knitr::include_graphics("000010.png")
+```
+
+
+\newpage
+
+## Result
+
+### Interpretation
+
+Let's take Manchester United Team for example. I fitted multilevel model using predictors FTHG (Full Time Home Team Goals), HST (Home Team Shots on Target), AC (Away Team Corners), HY (Home Team Yellow Cards) and HR (Home Team Red Cards), for the random effect is  (1 + FTHG + HST + HC| HomeTeam) and (1 + HF + HY| Referee).
+
+Firstly, we are able to get the following formula of fixed effect, the multilevel model can be written as below:
+$$ FTR = -4.21 + 4.43\times log(FTHG + 1) + 0.11 \times log(HST + 1) + 0.16 \times log(AC + 1) -0.18 \times log(HY + 1) - 1.00 \times log(HR + 1) $$ 
+Then add the random effect of Manchester United Team's random effect to the intercepts and slopes and get the estimated formula: 
+$$ FTR = -3.59 + 4.67\times log(FTHG + 1) + 0.44 \times log(HST + 1) + 0.16 \times log(AC + 1) -0.18 \times log(HY + 1) - 1.00 \times log(HR + 1) $$  
+Therefore, we can interpret the model fitted by using, for instance, Full Time Home Team Goals. For everyone extra change in Full Time Home Team Goals for all the teams in premier league, when other variables are constant, the Full Time Result(probability of winning the game scale from 0 to 1) will increase by exp(4.43).
+
+Same interpretation with Manchester United. For everyone extra change in Full Time Home Team Goals for Manchester united, when other variables are constant, the Full Time Result(probability of winning the game scale from 0 to 1) will increase by exp(4.67).
+
+
+<!-- ## Predict -->
+<!-- Use posterior predictive checks to investigate model fit. -->
+```{r echo = FALSE}
+# modelpred = posterior_predict(model)
+# ppc_dens_overlay(log_EPL_stats$FTHG,modelpred[1:100,])
+```
+
+
+### Model Checking
+
+I used two individual plots to check the model, "Residuals vs. Fitted" and "QQ Plot".
+
+```{r echo=FALSE, out.width = '100%', fig.cap="Residual plot and Q-Q plot."}
+#knitr::include_graphics("000011.png")
+#Assumption 2 Homogeneity of Variance
+plot_model <- plot(model)
+
+#Assumption 3: The residuals of the model are normally distributed.
+#qq plot (similar to a diagnostic plot provided by the lm function) for an estimation of the linearity of the residuals
+require("lattice")
+qq_plot      <- qqmath(model)
+# There is some deviation from from the expected normal line towards the tails, but overall the line looks straight and therefore pretty normal and suggests that the assumption is not violated
+
+grid.arrange(plot_model, qq_plot, ncol = 2)
+
+```
+
+~\\
+
+According to the residual analysis, I used several different predictors to fit the multilevel model, the Residual plot indicated that the residual may be ok to fit the model. According to it, the mean value of residuals is approximately 0. 
+ 
+On "QQ Plot", there are plenty of residual points not on the lines with long tails, it has the issue of low values too low and high values too high for normal, so it might not follow the normal distribution. Thus the normality check fails.
+
+
+
+\newpage
+
+## Discussion
+
+In this report, multilevel model is used to figure out the relationship between matchs' full time result and their several basic on-court stats. Also, this model take two kinds of group level into consideration: match's' home teams and matchs' referees. Generally, from the perspective of fixed effects, predictors like full time home team goals and home team shots on target have positive impacts on winning the game while Fouls, yellow and red cards are always bad. In addition, both in team and position level, the random effects sound reasonable, which means the results can be explained by the characteristics of teams or referees. Finally, several model checks are not that good to support the validity of the model.
+
+This report has limitations. For example, the data set I use covers the past 20 seasons (that is, 20 years). In such a long period of time, whether the rules of the Premier League or the way the game is judged (such as the introduction of VAR), must have been through earth-shaking changes. Therefore, it is unreasonable to ignore the factor of time. For possible future improvements, maybe I'll consider introducing time series analysis. Additionally, the model I fit does not fit as well as expected, which may be related to other unconsidered predictors.
+
+
+## Reference
+
+[1] Ben Bolker and others. _GLMM FAQ_. 
+http://bbolker.github.io/mixedmodels-misc/glmmFAQ.html
+
+
+
+\newpage
+
+## Appendix
+
+### Variable distributions
+
+```{r include=FALSE}
+# Exploratory Data Analysis
+dist_FTHG     <- ggplot(data=EPL_stats,aes(x=FTHG   ))+geom_histogram(aes(y=..density..),bins=20,fill="#999999")+geom_density(lwd=1,alpha=.4,fill="#999999")+labs(title="Final Time Home Goals     ")
+dist_HST    <- ggplot(data=EPL_stats,aes(x=HST    ))+geom_histogram(aes(y=..density..),bins=30,fill="#E69F00")+geom_density(lwd=1,alpha=.4,fill="#E69F00")+labs(title="Home Team Shots on Target    ")
+dist_HC     <- ggplot(data=EPL_stats,aes(x=HC ))+geom_histogram(aes(y=..density..),bins=20,fill="#56B4E9")+geom_density(lwd=1,alpha=.4,fill="#56B4E9")+labs(title="Home Corners ")
+dist_HF     <- ggplot(data=EPL_stats,aes(x=HF     ))+geom_histogram(aes(y=..density..),bins=30,fill="#009E73")+geom_density(lwd=1,alpha=.4,fill="#009E73")+labs(title="Home Team Fouls     ")
+dist_HR    <- ggplot(data=EPL_stats,aes(x=HR   ))+geom_histogram(aes(y=..density..),bins=5,fill="#F0E442")+geom_density(lwd=1,alpha=.4,fill="#F0E442")+labs(title="Home Teams Red Cards    ")
+dist_HY    <- ggplot(data=EPL_stats,aes(x=HY   ))+geom_histogram(aes(y=..density..),bins=10,fill="#F0E442")+geom_density(lwd=1,alpha=.4,fill="#F0E442")+labs(title="Home Teams Yellow Cards    ")
+```
+
+```{r echo=FALSE, fig.height=4, fig.width=9, fig.cap="EDA: distribution plots (1)"}
+grid.arrange(dist_FTHG, dist_HST, dist_HC, dist_HF, dist_HR, dist_HY, ncol = 3, nrow = 2)
+```
+
+```{r echo=FALSE, fig.height=3.6, fig.width=10, fig.cap="relationship between Full Time Result and Home Team Shots"}
+set.seed(1)
+team_sample <- sample(unique(EPL_stats$HomeTeam), 10, replace = FALSE) # random sample 10 from 30 
+# Home Team Fouls Committed
+HF_by_teams <- ggplot(data = subset(EPL_stats, HomeTeam %in% team_sample)) + 
+  aes(x = HS, y = FTR) + 
+  geom_point(aes(color = factor(HomeTeam)), size = .6) + 
+  geom_smooth(aes(color = factor(HomeTeam)), method = "glm", se = FALSE, method.args = list(family=binomial)) + 
+  labs(title = "(a) FTR vs Home Team Shots", x = "Home Team Shots", y = "Full Time Result")
+
+ref_sample <- sample(unique(EPL_stats$Referee), 10, replace = FALSE) 
+HF_by_REF <- ggplot(data = subset(EPL_stats, Referee %in% ref_sample)) + 
+  aes(x = HS, y = FTR) + 
+  geom_point(aes(color = Referee), size = .6) + 
+  geom_smooth(aes(color = Referee), method = "glm", se = FALSE, method.args = list(family=binomial)) + 
+  labs(title = "(b) FTR vs Home Team Shots", x = "Home Team Shots", y = "Full Time Result") + ylim(0,1) 
+grid.arrange(HF_by_teams, HF_by_REF, ncol = 2)
+```
+
